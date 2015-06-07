@@ -8,6 +8,7 @@ defmodule Honeydew.JobList do
     defstruct honey_module: nil,
               max_failures: nil,
               delay_secs: nil,
+              suspended: false,
               jobs: :queue.new, # jobs waiting to be taken by a honey
               backlog: HashSet.new, # jobs that have failed max_failures number of times, and are waiting to be re-queued after delay_secs
               waiting: :queue.new, # honeys that are waiting for a job
@@ -35,6 +36,11 @@ defmodule Honeydew.JobList do
     {:noreply, add_job(job, state)}
   end
 
+  def handle_call(:job_please, from_honey, %{suspended: true} = state) do
+    {honey, _msg_ref} = from_honey
+    {:noreply, %{state | waiting: :queue.in(from_honey, state.waiting), working: Dict.delete(state.working, honey)}}
+  end
+
   def handle_call(:job_please, from_honey, state) do
     {honey, _msg_ref} = from_honey
     case :queue.out(state.jobs) do
@@ -53,14 +59,24 @@ defmodule Honeydew.JobList do
     {:reply, nil, state}
   end
 
+  def handle_call(:suspend, _from, state) do
+    {:reply, :ok, Map.put(state, :suspended, true)}
+  end
+
+  def handle_call(:resume, _from, state) do
+    state = resume_waiting_jobs(state)
+    {:reply, :ok, Map.put(state, :suspended, false)}
+  end
+
   def handle_call(:status, _from, state) do
-    %State{jobs: jobs, backlog: backlog, working: working, waiting: waiting} = state
+    %State{jobs: jobs, backlog: backlog, working: working, waiting: waiting, suspended: suspended} = state
 
     status = %{
        jobs: :queue.len(jobs),
        backlog: Set.size(backlog),
        working: Dict.size(working),
-       waiting: :queue.len(waiting)
+       waiting: :queue.len(waiting),
+       suspended: suspended
     }
 
     {:reply, status, state}
@@ -132,5 +148,26 @@ defmodule Honeydew.JobList do
     end
   end
 
-end
+  defp resume_waiting_jobs(state) do
+    case :queue.out(state.jobs) do
+      # there's a job in the jobs
+      {{:value, job}, jobs} ->
+        # see if there is a honey available
+        case next_alive_honey(state.waiting) do
+          # no honey is waiting, leave
+          {nil, waiting} ->
+            %{state | waiting: waiting}
+          # there is a honey, give it a job
+          {from_honey, waiting} ->
+            {honey, _msg_ref} = from_honey
+            GenServer.reply(from_honey, job)
+            resume_waiting_jobs(
+              %{state | jobs: jobs, waiting: waiting, working: Dict.put(state.working, honey, job)})
+          end
+      # no jobs
+      {:empty, _} ->
+        state
+      end
+    end
 
+end

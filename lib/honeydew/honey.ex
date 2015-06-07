@@ -105,6 +105,17 @@ defmodule Honeydew.Honey do
         job_list = Honeydew.job_list(__MODULE__)
         GenServer.call(job_list, :status)
       end
+
+      def suspend do
+        job_list = Honeydew.job_list(__MODULE__)
+        GenServer.call(job_list, :suspend)
+      end
+
+      def resume do
+        job_list = Honeydew.job_list(__MODULE__)
+        GenServer.call(job_list, :resume)
+      end
+      
     end
   end
 
