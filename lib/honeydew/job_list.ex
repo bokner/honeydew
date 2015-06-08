@@ -112,6 +112,9 @@ defmodule Honeydew.JobList do
   end
   def handle_info(_msg, state), do: {:noreply, state}
 
+  defp add_job(job, %{suspended: true} = state) do 
+    %{state | jobs: :queue.in(job, state.jobs)}
+  end
 
   defp add_job(job, state) do
     case next_alive_honey(state.waiting) do
